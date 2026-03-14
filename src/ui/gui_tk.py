@@ -1,8 +1,5 @@
 import tkinter as tk
-from src.ai.agent import Agent
-from src.ai.heuristic_agent.heuristic_agent import HeuristicAgent
-# from src.ai.rl_agent import RLAgent
-from src.ai.random_agent.random_agent import RandomAgent
+from src.ai.agent.agent import Agent, TrainableAgent
 from src.core.enums import GameStatus, Direction
 from src.core.game import Game
 from src.ui.config import LayoutConfig
@@ -58,7 +55,7 @@ class GameGUI:
         y0 = self.layout.padding + (self.layout.gap + self.layout.cell_size) * i
         x1 = x0 + self.layout.cell_size
         y1 = y0 + self.layout.cell_size
-        num = self.game.board._grid[i][j]
+        num = self.game.board.grid[i][j]
         self.canvas.create_rectangle(
             x0, y0, x1, y1,
             fill=self.get_color(num)[0],
@@ -118,7 +115,7 @@ class GameGUI:
         ranked_x = self.layout.canvas_width - self.layout.sidebar_width / 2
         ranked_y = self.layout.canvas_height * 4.5 / 6
         ranked_string = ""
-        if not  ranked is None:
+        if not ranked is None:
             for item in ranked:
                 if item[1] is None:
                     ranked_string += f"{item[0]}\tNone\n"
@@ -174,9 +171,11 @@ class GameGUI:
         direction = self._get_agent_suggestion()
         self.step(direction)
 
-        self.root.after(80, self._auto_loop)
+        self.root.after(20, self._auto_loop)
 
     def run(self):
+        if isinstance(self.agent, TrainableAgent):
+            self.agent.load()
         self.render()
         self.root.mainloop()
 
@@ -189,16 +188,21 @@ class GameGUI:
             fill=color
         )
 
-def run():
-    from src.ai.heuristic_agent.heuristic_io import load_weights
-    load_weights()
-
+def run(agent_name: str = "random") -> None:
     root = tk.Tk()
-    game_gui = GameGUI(root, "2048 Game", HeuristicAgent())
-    # game_gui = GameGUI(root, "2048 Game", RandomAgent())
-    # game_gui = GameGUI(root, "2048 Game", RLAgent())
-    # game_gui = GameGUI(root, "2048 Game", None)
+    match agent_name:
+        case "heuristic":
+            from src.ai.agent.heuristic_agent import HeuristicAgent
+            game_gui = GameGUI(root, "2048 Game", HeuristicAgent())
+        case "random":
+            from src.ai.agent.random_agent import RandomAgent
+            game_gui = GameGUI(root, "2048 Game", RandomAgent())
+        case "expectimax":
+            from src.ai.agent.expectimax_agent import ExpectimaxAgent
+            game_gui = GameGUI(root, "2048 Game", ExpectimaxAgent())
     game_gui.run()
 
 if __name__ == "__main__":
-    run()
+    # run("heuristic")
+    # run("random")
+    run("expectimax")

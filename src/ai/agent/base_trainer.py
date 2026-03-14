@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from src.ai.agent import TrainableAgent
+from src.ai.agent.agent import TrainableAgent
 from src.core.enums import GameStatus, MoveStatus
 from src.core.game import Game
 

@@ -48,7 +48,7 @@ class Game:
 
     def is_win(self) -> bool:
         max_exponent, _ = self.board.get_max_exponent()
-        return max_exponent >= 11
+        return max_exponent >= 15
 
     def is_over(self) -> bool:
         return not self.board.can_move()

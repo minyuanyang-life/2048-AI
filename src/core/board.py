@@ -94,6 +94,27 @@ class Board:
         exp = self._grid[row][col]
         return 0 if exp == 0 else 2 ** exp
 
+    def set_value(self, row: int, col: int, value: int) -> None:
+        """
+        Set the tile at the given position using the displayed value.
+
+        Args:
+            row: Row index of the target cell.
+            col: Column index of the target cell.
+            value: Displayed tile value. Must be 0 or a power of 2.
+
+        Raises:
+            ValueError: If value is negative or not a power of 2.
+        """
+        if value == 0:
+            self._grid[row][col] = 0
+            return
+
+        if value < 0 or (value & (value - 1)) != 0:
+            raise ValueError("Tile value must be 0 or a power of 2.")
+
+        self._grid[row][col] = value.bit_length() - 1
+
     def export_tile_values(self) -> list[list[int]]:
         return [
             [0 if exp == 0 else 2 ** exp for exp in row]

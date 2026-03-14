@@ -1,9 +1,8 @@
 import random
 
-from src.ai.base_trainer import BaseTrainer
-from src.ai.heuristic_agent.heuristic_agent import HeuristicAgent
-from src.ai.heuristic_agent.heuristic_config import HeuristicWeights, HeuristicTrainerConfig
-from src.ai.heuristic_agent.heuristic_io import save_weights, load_weights
+from src.ai.agent.base_trainer import BaseTrainer
+from src.ai.agent.heuristic_agent import HeuristicAgent
+from src.ai.evaluator.heuristic_config import HeuristicWeights, HeuristicTrainerConfig
 
 
 class HeuristicTraining(BaseTrainer):
@@ -38,7 +37,7 @@ class HeuristicTraining(BaseTrainer):
             num_iterations: int = 50,
             num_eval_games: int = 10,
     ) -> None:
-        load_weights()
+        self.agent.load()
 
         candidate_params = HeuristicWeights()
         best_score = self._evaluate_params(num_iterations, candidate_params)
@@ -52,7 +51,7 @@ class HeuristicTraining(BaseTrainer):
                 best_score = score
                 best_params = candidate_params
 
-        save_weights(best_params)
+        self.agent.save(best_params)
         print(best_score)
 
 def main():

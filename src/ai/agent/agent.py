@@ -66,3 +66,11 @@ class TrainableAgent(Agent):
     @abstractmethod
     def set_params(self, params) -> None:
         raise NotImplementedError
+
+    @abstractmethod
+    def save(self, ):
+        raise NotImplementedError
+
+    @abstractmethod
+    def load(self):
+        raise NotImplementedError

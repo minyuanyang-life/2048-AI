@@ -1,7 +1,7 @@
 from time import time
 import random
 
-from src.ai.base_trainer import AgentTraining
+from src.ai.agent.base_trainer import AgentTraining
 from src.ai.rl_agent import RLAgent as Agent
 from src.ai.config import RLParameters as Parameter
 from src.ai.rl_agent_reward import RLAgentReward as Reward
