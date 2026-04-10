@@ -2,7 +2,7 @@ import random
 
 from src.core.enums import Direction
 from src.core.game import Game
-from src.ai.agent import Agent
+from src.ai.agent.agent import Agent
 
 
 class RandomAgent(Agent):

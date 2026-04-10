@@ -51,6 +51,7 @@ class HeuristicTrainerConfig:
 
 @dataclass
 class ExpectimaxConfig:
+    depth: int = 2
     spawn_two_prob: float = 0.9
     spawn_four_prob: float = 0.1
     tie_break_eps: float = 1e-9

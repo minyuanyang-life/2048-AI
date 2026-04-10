@@ -61,27 +61,36 @@ class ExpectimaxAgent(TrainableAgent):
         if not dirs:
             raise RuntimeError("ExpectimaxAgent was called on a terminal game state.")
 
+        depth = max(1, self.config.depth)
+
         ranking: list[tuple[Direction, float]] = []
         for direction in dirs:
-            score = self._evaluate_action(game, direction)
+            score = self._evaluate_action(game, direction, depth)
             ranking.append((direction, score))
 
         ranking.sort(key=lambda x: x[1], reverse=True)
         return ranking
 
-    def _evaluate_action(self, game: Game, direction: Direction) -> float:
+    def _evaluate_action(
+        self,
+        game: Game,
+        direction: Direction,
+        depth: int
+    ) -> float:
         next_game = game.clone()
         move_status, _ = next_game.board.move(direction)
 
         if move_status != MoveStatus.MOVED:
             return float("-inf")
 
-        return self._chance_value(next_game)
+        return self._chance_value(next_game, depth - 1)
 
-    def _chance_value(self, game: Game) -> float:
+    def _chance_value(self, game: Game, depth: int) -> float:
         empty_positions = self._get_empty_positions(game)
         if not empty_positions:
-            return self._leaf_score(game)
+            if depth <= 0:
+                return self._leaf_score(game)
+            return self._max_value(game, depth)
 
         expected_score = 0.0
         p_cell = 1.0 / len(empty_positions)
@@ -89,15 +98,36 @@ class ExpectimaxAgent(TrainableAgent):
         for row, col in empty_positions:
             game_2 = game.clone()
             game_2.board.set_value(row, col, 2)
-            score_2 = self._leaf_score(game_2)
+            if depth <= 0:
+                score_2 = self._leaf_score(game_2)
+            else:
+                score_2 = self._max_value(game_2, depth)
             expected_score += p_cell * self.config.spawn_two_prob * score_2
 
             game_4 = game.clone()
             game_4.board.set_value(row, col, 4)
-            score_4 = self._leaf_score(game_4)
+            if depth <= 0:
+                score_4 = self._leaf_score(game_4)
+            else:
+                score_4 = self._max_value(game_4, depth)
             expected_score += p_cell * self.config.spawn_four_prob * score_4
 
         return expected_score
+
+    def _max_value(self, game: Game, depth: int) -> float:
+        if depth <= 0:
+            return self._leaf_score(game)
+
+        dirs = game.board.get_legal_directions()
+        if not dirs:
+            return -1e9
+
+        best_score = float("-inf")
+        for direction in dirs:
+            score = self._evaluate_action(game, direction, depth)
+            best_score = max(best_score, score)
+
+        return best_score
 
     def _leaf_score(self, game: Game) -> float:
         if not game.board.can_move():

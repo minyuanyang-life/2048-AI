@@ -176,7 +176,8 @@ class GameGUI:
     def run(self):
         if isinstance(self.agent, TrainableAgent):
             self.agent.load()
-        self.render()
+
+        self.render(show_suggestion=False)
         self.root.mainloop()
 
     def _show_overlay(self, text, color="#ff0000"):
@@ -190,6 +191,7 @@ class GameGUI:
 
 def run(agent_name: str = "random") -> None:
     root = tk.Tk()
+    game_gui = None
     match agent_name:
         case "heuristic":
             from src.ai.agent.heuristic_agent import HeuristicAgent
