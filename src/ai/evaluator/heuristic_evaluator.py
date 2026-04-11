@@ -59,9 +59,10 @@ class HeuristicEvaluator:
     def _feature_snake_monotonicity(self, board: Board) -> float:
         weights = [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
         best_score = float("-inf")
+        grid = board.grid
 
         for template in SNAKE_TEMPLATES:
-            values = [board.grid[r][c] for r, c in template]
+            values = [grid[r][c] for r, c in template]
             score = self._score_single_snake(values, weights)
             best_score = max(best_score, score)
 

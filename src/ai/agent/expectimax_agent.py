@@ -49,16 +49,17 @@ class ExpectimaxAgent(TrainableAgent):
         return self._rng.choice(best_directions)
 
     def get_action_ranking(self, game: Game) -> list[tuple[Direction, float]]:
-        dirs = game.board.get_legal_directions()
-        if not dirs:
-            raise RuntimeError("ExpectimaxAgent was called on a terminal game state.")
-
         depth = max(1, self.config.depth)
+        cache: dict[tuple[str, int, tuple[tuple[int, ...], ...]], float] = {}
 
         ranking: list[tuple[Direction, float]] = []
-        for direction in dirs:
-            score = self._evaluate_action(game, direction, depth)
-            ranking.append((direction, score))
+        for direction in Direction.all():
+            score = self._evaluate_action(game, direction, depth, cache)
+            if score != float("-inf"):
+                ranking.append((direction, score))
+
+        if not ranking:
+            raise RuntimeError("ExpectimaxAgent was called on a terminal game state.")
 
         ranking.sort(key=lambda x: x[1], reverse=True)
         return ranking
@@ -67,7 +68,8 @@ class ExpectimaxAgent(TrainableAgent):
         self,
         game: Game,
         direction: Direction,
-        depth: int
+        depth: int,
+        cache: dict[tuple[str, int, tuple[tuple[int, ...], ...]], float],
     ) -> float:
         next_game = game.clone()
         move_status, _ = next_game.board.move(direction)
@@ -75,14 +77,27 @@ class ExpectimaxAgent(TrainableAgent):
         if move_status != MoveStatus.MOVED:
             return float("-inf")
 
-        return self._chance_value(next_game, depth - 1)
+        return self._chance_value(next_game, depth - 1, cache)
 
-    def _chance_value(self, game: Game, depth: int) -> float:
+    def _chance_value(
+        self,
+        game: Game,
+        depth: int,
+        cache: dict[tuple[str, int, tuple[tuple[int, ...], ...]], float],
+    ) -> float:
+        key = ("chance", depth, self._board_key(game))
+        if key in cache:
+            return cache[key]
+
         empty_positions = self._get_empty_positions(game)
         if not empty_positions:
             if depth <= 0:
-                return self._leaf_score(game)
-            return self._max_value(game, depth)
+                score = self._leaf_score(game)
+                cache[key] = score
+                return score
+            score = self._max_value(game, depth, cache)
+            cache[key] = score
+            return score
 
         expected_score = 0.0
         p_cell = 1.0 / len(empty_positions)
@@ -93,7 +108,7 @@ class ExpectimaxAgent(TrainableAgent):
             if depth <= 0:
                 score_2 = self._leaf_score(game_2)
             else:
-                score_2 = self._max_value(game_2, depth)
+                score_2 = self._max_value(game_2, depth, cache)
             expected_score += p_cell * self.config.spawn_two_prob * score_2
 
             game_4 = game.clone()
@@ -101,24 +116,36 @@ class ExpectimaxAgent(TrainableAgent):
             if depth <= 0:
                 score_4 = self._leaf_score(game_4)
             else:
-                score_4 = self._max_value(game_4, depth)
+                score_4 = self._max_value(game_4, depth, cache)
             expected_score += p_cell * self.config.spawn_four_prob * score_4
 
+        cache[key] = expected_score
         return expected_score
 
-    def _max_value(self, game: Game, depth: int) -> float:
-        if depth <= 0:
-            return self._leaf_score(game)
+    def _max_value(
+        self,
+        game: Game,
+        depth: int,
+        cache: dict[tuple[str, int, tuple[tuple[int, ...], ...]], float],
+    ) -> float:
+        key = ("max", depth, self._board_key(game))
+        if key in cache:
+            return cache[key]
 
-        dirs = game.board.get_legal_directions()
-        if not dirs:
-            return -1e9
+        if depth <= 0:
+            score = self._leaf_score(game)
+            cache[key] = score
+            return score
 
         best_score = float("-inf")
-        for direction in dirs:
-            score = self._evaluate_action(game, direction, depth)
+        for direction in Direction.all():
+            score = self._evaluate_action(game, direction, depth, cache)
             best_score = max(best_score, score)
 
+        if best_score == float("-inf"):
+            best_score = -1e9
+
+        cache[key] = best_score
         return best_score
 
     def _leaf_score(self, game: Game) -> float:
@@ -131,6 +158,13 @@ class ExpectimaxAgent(TrainableAgent):
         positions: list[tuple[int, int]] = []
         for row in range(4):
             for col in range(4):
-                if game.board.grid[row][col] == 0:
+                if game.board.get_exponent(row, col) == 0:
                     positions.append((row, col))
         return positions
+
+    @staticmethod
+    def _board_key(game: Game) -> tuple[tuple[int, ...], ...]:
+        return tuple(
+            tuple(game.board.get_exponent(row, col) for col in range(4))
+            for row in range(4)
+        )
