@@ -9,6 +9,7 @@ class BaseTrainer(ABC):
     def __init__(self, agent: TrainableAgent) -> None:
         self.agent = agent
         self.name = agent.name + "Trainer"
+        self.pbar = None
 
     @abstractmethod
     def train(self, n: int, base_seed: int = 0) -> float:
@@ -25,4 +26,5 @@ class BaseTrainer(ABC):
                 if move_status == MoveStatus.INVALID_MOVE:
                     raise RuntimeError(f"{self.agent.name} produced an invalid move.")
             score += game.score
+            self.pbar.update(1)
         return score / n

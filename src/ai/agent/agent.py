@@ -1,4 +1,7 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
+
+from src.ai.evaluator.heuristic_evaluator import HeuristicEvaluator
 from src.core.enums import Direction
 from src.core.game import Game
 
@@ -59,18 +62,33 @@ class Agent(ABC):
         return self.name
 
 class TrainableAgent(Agent):
-    @abstractmethod
+    def __init__(
+        self,
+        name: str = "agent",
+        params = None,
+        evaluator = HeuristicEvaluator,
+    ) -> None:
+        super().__init__(name)
+        self._evaluator = evaluator(params)
+        self._rng = None
+
+    def get_action(self, game: Game) -> Direction:
+        return super().get_action(game)
+
+    def record_params(self):
+        return self._evaluator.record_params()
+
     def get_params(self):
-        raise NotImplementedError
+        return self._evaluator.get_params()
 
-    @abstractmethod
-    def set_params(self, params) -> None:
-        raise NotImplementedError
+    def set_params(self, params):
+        return self._evaluator.set_params(params)
 
-    @abstractmethod
-    def save(self, ):
-        raise NotImplementedError
+    def save(self, path: str | Path | None = None) -> Path:
+        return self._evaluator.save(path)
 
-    @abstractmethod
-    def load(self):
-        raise NotImplementedError
+    def load(self, path: str | Path | None = None) -> None:
+        self._evaluator.load(path)
+
+    def feedback(self) -> None:
+        self._evaluator.feedback(self._rng)

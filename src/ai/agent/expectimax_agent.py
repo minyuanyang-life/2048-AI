@@ -1,10 +1,8 @@
 import random
-from pathlib import Path
 
 from src.ai.agent.agent import TrainableAgent
-from src.ai.agent_io import save_params, load_params
+from src.ai.evaluator.config import ExpectimaxConfig, HeuristicWeights
 from src.ai.evaluator.heuristic_evaluator import HeuristicEvaluator
-from src.ai.evaluator.heuristic_config import HeuristicWeights, ExpectimaxConfig
 from src.core.enums import Direction, MoveStatus
 from src.core.game import Game
 
@@ -20,27 +18,21 @@ class ExpectimaxAgent(TrainableAgent):
     4. Choose the move with the highest expected value.
 
     Notes:
-    - Leaf evaluation is delegated to HeuristicEvaluator.
+    - Leaf evaluation is delegated to the selected evaluator.
     - board.move(direction) must be deterministic here:
       move/merge only, without spawning a random tile.
     """
 
     def __init__(
         self,
-        params: HeuristicWeights | None = None,
         config: ExpectimaxConfig | None = None,
+        params: HeuristicWeights | None = None,
+        evaluator: HeuristicEvaluator = HeuristicEvaluator,
         seed: int | None = None,
     ) -> None:
-        super().__init__("ExpectimaxAgent")
+        super().__init__("ExpectimaxAgent", params, evaluator)
         self.config = config or ExpectimaxConfig()
         self._rng = random.Random(seed)
-        self._evaluator = HeuristicEvaluator(params)
-
-    def get_params(self) -> HeuristicWeights:
-        return self._evaluator.get_weights()
-
-    def set_params(self, params: HeuristicWeights) -> None:
-        self._evaluator.set_weights(params)
 
     def get_action(self, game: Game) -> Direction:
         ranking = self.get_action_ranking(game)
@@ -142,10 +134,3 @@ class ExpectimaxAgent(TrainableAgent):
                 if game.board.grid[row][col] == 0:
                     positions.append((row, col))
         return positions
-
-    def save(self, path: str | Path | None = None) -> Path:
-        return save_params(self.get_params().to_dict(), "expectimax", path)
-
-    def load(self, path: str | Path | None = None) -> None:
-        data = load_params("expectimax", path)
-        self.set_params(HeuristicWeights.from_dict(data))

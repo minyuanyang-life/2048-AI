@@ -1,13 +1,17 @@
 from dataclasses import replace
 from math import log2
+from pathlib import Path
+from random import Random
 
+from src.ai.agent_io import save_params, load_params
 from src.core.board import Board
-from src.ai.evaluator.heuristic_config import HeuristicWeights, SNAKE_TEMPLATES
+from src.ai.evaluator.config import HeuristicWeights, SNAKE_TEMPLATES, HeuristicTrainerConfig
 
 
 class HeuristicEvaluator:
     def __init__(self, weights: HeuristicWeights | None = None) -> None:
         self._weights = replace(weights) if weights is not None else HeuristicWeights()
+        self._best_params = self._weights
 
     def evaluate_board(self, board: Board) -> float:
         feature_empty = self._feature_empty_tiles(board)
@@ -20,11 +24,37 @@ class HeuristicEvaluator:
             + feature_snake_monotonicity * self._weights.snake_monotonicity
         )
 
-    def set_weights(self, weights: HeuristicWeights) -> None:
-        self._weights = replace(weights)
+    def record_params(self):
+        self._best_params = replace(self._weights)
 
-    def get_weights(self) -> HeuristicWeights:
-        return replace(self._weights)
+    def set_params(self, weights: HeuristicWeights) -> None:
+        self._weights = replace(weights)
+        self._best_params = replace(weights)
+
+    def get_params(self) -> HeuristicWeights:
+        return replace(self._best_params)
+
+    def save(self, path: str | Path | None = None) -> Path:
+        return save_params(self.get_params().to_dict(), "expectimax", path)
+
+    def load(self, path: str | Path | None = None) -> None:
+        data = load_params("expectimax", path)
+        self.set_params(HeuristicWeights.from_dict(data))
+
+    def feedback(self, rng: Random) -> None:
+        self.sample_params(rng)
+
+    def sample_params(self, rng: Random) -> None:
+        params_list = self.get_params().to_list()
+        sigma = HeuristicTrainerConfig.sample_sigma
+
+        new_params_list = []
+        for param in params_list:
+            new_param = param + rng.gauss(0.0, sigma)
+            new_param = min(max(new_param, 0.0), 5.0)
+            new_params_list.append(new_param)
+
+        self.set_params(HeuristicWeights.from_list(new_params_list))
 
     def _feature_snake_monotonicity(self, board: Board) -> float:
         weights = [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
