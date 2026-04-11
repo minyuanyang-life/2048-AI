@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from src.ai.evaluator.heuristic_evaluator import HeuristicEvaluator
+from src.ai.evaluator.base_evaluator import BaseEvaluator
 from src.core.enums import Direction
 from src.core.game import Game
 
@@ -64,9 +64,9 @@ class Agent(ABC):
 class TrainableAgent(Agent):
     def __init__(
         self,
+        evaluator: type[BaseEvaluator],
+        params,
         name: str = "agent",
-        params = None,
-        evaluator = HeuristicEvaluator,
     ) -> None:
         super().__init__(name)
         self._evaluator = evaluator(params)
@@ -92,3 +92,9 @@ class TrainableAgent(Agent):
 
     def feedback(self) -> None:
         self._evaluator.feedback(self._rng)
+
+    def get_param_vector(self) -> list[float]:
+        return self._evaluator.get_param_vector()
+
+    def set_param_vector(self, values: list[float]) -> None:
+        self._evaluator.set_param_vector(values)

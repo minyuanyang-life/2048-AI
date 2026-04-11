@@ -4,14 +4,17 @@ from pathlib import Path
 from random import Random
 
 from src.ai.agent_io import save_params, load_params
+from src.ai.evaluator.base_evaluator import BaseEvaluator
 from src.core.board import Board
 from src.ai.evaluator.config import HeuristicWeights, SNAKE_TEMPLATES, HeuristicTrainerConfig
 
 
-class HeuristicEvaluator:
+class HeuristicEvaluator(BaseEvaluator):
     def __init__(self, weights: HeuristicWeights | None = None) -> None:
-        self._weights = replace(weights) if weights is not None else HeuristicWeights()
-        self._best_params = self._weights
+        super().__init__(
+            "HeuristicEvaluator",
+            replace(weights) if weights is not None else HeuristicWeights()
+        )
 
     def evaluate_board(self, board: Board) -> float:
         feature_empty = self._feature_empty_tiles(board)
@@ -19,20 +22,10 @@ class HeuristicEvaluator:
         feature_snake_monotonicity = self._feature_snake_monotonicity(board)
 
         return (
-            feature_empty * self._weights.empty
-            + feature_log2_max * self._weights.log2_max
-            + feature_snake_monotonicity * self._weights.snake_monotonicity
+            feature_empty * self._params.empty
+            + feature_log2_max * self._params.log2_max
+            + feature_snake_monotonicity * self._params.snake_monotonicity
         )
-
-    def record_params(self):
-        self._best_params = replace(self._weights)
-
-    def set_params(self, weights: HeuristicWeights) -> None:
-        self._weights = replace(weights)
-        self._best_params = replace(weights)
-
-    def get_params(self) -> HeuristicWeights:
-        return replace(self._best_params)
 
     def save(self, path: str | Path | None = None) -> Path:
         return save_params(self.get_params().to_dict(), "expectimax", path)
@@ -43,6 +36,12 @@ class HeuristicEvaluator:
 
     def feedback(self, rng: Random) -> None:
         self.sample_params(rng)
+
+    def get_param_vector(self) -> list[float]:
+        return self.get_params().to_list()
+
+    def set_param_vector(self, values: list[float]) -> None:
+        self.set_params(HeuristicWeights.from_list(values))
 
     def sample_params(self, rng: Random) -> None:
         params_list = self.get_params().to_list()

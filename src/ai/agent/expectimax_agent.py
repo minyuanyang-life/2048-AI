@@ -1,6 +1,7 @@
 import random
 
 from src.ai.agent.agent import TrainableAgent
+from src.ai.evaluator.base_evaluator import BaseEvaluator
 from src.ai.evaluator.config import ExpectimaxConfig, HeuristicWeights
 from src.ai.evaluator.heuristic_evaluator import HeuristicEvaluator
 from src.core.enums import Direction, MoveStatus
@@ -27,10 +28,10 @@ class ExpectimaxAgent(TrainableAgent):
         self,
         config: ExpectimaxConfig | None = None,
         params: HeuristicWeights | None = None,
-        evaluator: HeuristicEvaluator = HeuristicEvaluator,
+        evaluator: type[BaseEvaluator] = HeuristicEvaluator,
         seed: int | None = None,
     ) -> None:
-        super().__init__("ExpectimaxAgent", params, evaluator)
+        super().__init__(evaluator, params, "ExpectimaxAgent")
         self.config = config or ExpectimaxConfig()
         self._rng = random.Random(seed)
 
