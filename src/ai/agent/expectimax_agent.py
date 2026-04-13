@@ -101,23 +101,31 @@ class ExpectimaxAgent(TrainableAgent):
 
         expected_score = 0.0
         p_cell = 1.0 / len(empty_positions)
+        branch_games: list[Game] = []
+        branch_weights: list[float] = []
 
         for row, col in empty_positions:
             game_2 = game.clone()
             game_2.board.set_value(row, col, 2)
             if depth <= 0:
-                score_2 = self._leaf_score(game_2)
+                branch_games.append(game_2)
+                branch_weights.append(p_cell * self.config.spawn_two_prob)
             else:
                 score_2 = self._max_value(game_2, depth, cache)
-            expected_score += p_cell * self.config.spawn_two_prob * score_2
+                expected_score += p_cell * self.config.spawn_two_prob * score_2
 
             game_4 = game.clone()
             game_4.board.set_value(row, col, 4)
             if depth <= 0:
-                score_4 = self._leaf_score(game_4)
+                branch_games.append(game_4)
+                branch_weights.append(p_cell * self.config.spawn_four_prob)
             else:
                 score_4 = self._max_value(game_4, depth, cache)
-            expected_score += p_cell * self.config.spawn_four_prob * score_4
+                expected_score += p_cell * self.config.spawn_four_prob * score_4
+
+        if depth <= 0 and branch_games:
+            branch_scores = self._leaf_scores_batch(branch_games)
+            expected_score += sum(w * s for w, s in zip(branch_weights, branch_scores))
 
         cache[key] = expected_score
         return expected_score
@@ -152,6 +160,28 @@ class ExpectimaxAgent(TrainableAgent):
         if not game.board.can_move():
             return -1e9
         return self._evaluator.evaluate_board(game.board)
+
+    def _leaf_scores_batch(self, games: list[Game]) -> list[float]:
+        if not games:
+            return []
+        boards = [g.board for g in games]
+        movable = [b.can_move() for b in boards]
+        movable_indices = [i for i, ok in enumerate(movable) if ok]
+        scores = [-1e9] * len(boards)
+
+        if not movable_indices:
+            return scores
+
+        movable_boards = [boards[i] for i in movable_indices]
+        evaluate_boards_fn = getattr(self._evaluator, "evaluate_boards", None)
+        if callable(evaluate_boards_fn):
+            batch_scores = evaluate_boards_fn(movable_boards)
+        else:
+            batch_scores = [self._evaluator.evaluate_board(board) for board in movable_boards]
+
+        for i, value in zip(movable_indices, batch_scores):
+            scores[i] = float(value)
+        return scores
 
     @staticmethod
     def _get_empty_positions(game: Game) -> list[tuple[int, int]]:

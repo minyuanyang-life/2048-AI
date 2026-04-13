@@ -1,4 +1,5 @@
 import random
+import time
 import torch
 from tqdm import tqdm
 
@@ -6,6 +7,7 @@ from src.ai.agent.base_trainer import BaseTrainer
 from src.ai.agent.expectimax_agent import ExpectimaxAgent
 from src.ai.evaluator.NN_evaluator import NNEvaluator
 from src.ai.evaluator.heuristic_evaluator import HeuristicEvaluator
+from src.ai.metrics.profile_store import EpisodeProfile, ProfileStore
 from src.core.enums import GameStatus, MoveStatus
 from src.core.game import Game
 
@@ -56,6 +58,71 @@ class NNTrainer(BaseTrainer):
             total += self._play_one_game(seed=eval_seed_base + i)
         evaluator.set_train_mode()
         return total / num_games
+
+    def profile_depth_runs(
+            self,
+            seed: int,
+            depths: tuple[int, ...] = (1, 2),
+            run_train_episode: bool = True,
+            output_path: str | None = None,
+    ) -> ProfileStore:
+        """
+        Same-seed one-episode profiling for multiple depths.
+        Records:
+        1) episode total duration
+        2) total steps
+        3) cumulative get_action duration
+        4) cumulative game.step duration
+        5) train_episode duration
+        6) NNEvaluator.evaluate_board call count / total / avg duration
+        """
+        store = ProfileStore()
+        evaluator = self.agent.evaluator
+        evaluator.set_train_mode()
+
+        for depth in depths:
+            self.agent.config.depth = depth
+            self._apply_seed(seed)
+
+            record = EpisodeProfile(seed=seed, depth=depth)
+            evaluator.bind_profile(record)
+            evaluator.reset_episode_buffer()
+
+            game = Game()
+            game_status = GameStatus.RUNNING
+            total_start = time.perf_counter()
+
+            while game_status == GameStatus.RUNNING:
+                evaluator.append_state(game.board)
+
+                action_start = time.perf_counter()
+                direction = self.agent.get_action(game)
+                record.get_action_total_s += time.perf_counter() - action_start
+
+                step_start = time.perf_counter()
+                game_status, move_status, info = game.step(direction)
+                record.game_step_total_s += time.perf_counter() - step_start
+                if move_status == MoveStatus.INVALID_MOVE:
+                    raise RuntimeError(f"{self.agent.name} produced an invalid move.")
+
+                evaluator.append_reward(float(info.get("score_delta", 0.0)))
+
+            record.total_duration_s = time.perf_counter() - total_start
+            record.total_steps = game.steps
+
+            if run_train_episode:
+                evaluator.train_episode(float(game.score))
+            else:
+                evaluator.reset_episode_buffer()
+
+            evaluator.bind_profile(None)
+            store.add(record)
+
+        if output_path is not None:
+            store.save_json(output_path)
+
+        evaluator.set_eval_mode()
+        return store
 
     def pretrain_with_teacher(
             self,
@@ -213,14 +280,16 @@ class NNTrainer(BaseTrainer):
 
 def main() -> None:
     trainer = NNTrainer(seed=0)
-    trainer.pretrain_with_teacher(
-        num_games=100,
-        max_steps_per_game=300,
-        epochs=3,
-        batch_size=256,
-        target_scale=10.0,
-        base_seed=100_000,
-    )
+    enable_teacher_pretrain = False
+    if enable_teacher_pretrain:
+        trainer.pretrain_with_teacher(
+            num_games=100,
+            max_steps_per_game=300,
+            epochs=3,
+            batch_size=256,
+            target_scale=10.0,
+            base_seed=100_000,
+        )
     trainer.train(n=500, base_seed=0, eval_interval=10, eval_games=10)
 
 

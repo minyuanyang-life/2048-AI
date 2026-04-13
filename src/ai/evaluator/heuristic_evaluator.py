@@ -27,6 +27,9 @@ class HeuristicEvaluator(BaseEvaluator):
             + feature_snake_monotonicity * self._params.snake_monotonicity
         )
 
+    def evaluate_boards(self, boards: list[Board]) -> list[float]:
+        return [self.evaluate_board(board) for board in boards]
+
     def save(self, path: str | Path | None = None) -> Path:
         return save_params(self.get_params().to_dict(), "expectimax", path)
 

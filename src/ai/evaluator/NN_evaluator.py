@@ -1,11 +1,13 @@
 from pathlib import Path
 from random import Random
+import time
 
 import torch
 import torch.nn as nn
 
 from src.ai.evaluator.base_evaluator import BaseEvaluator
 from src.ai.evaluator.config import DEVICE
+from src.ai.metrics.profile_store import EpisodeProfile
 from src.core.board import Board
 
 
@@ -25,6 +27,7 @@ class NNEvaluator(BaseEvaluator):
         self.episode_states: list[list[float]] = []
         self.episode_rewards: list[float] = []
         self._training_mode = False
+        self._profile: EpisodeProfile | None = None
 
         if isinstance(params, dict):
             model_state = params.get("model_state_dict")
@@ -53,6 +56,7 @@ class NNEvaluator(BaseEvaluator):
         return self.model(x)
 
     def evaluate_board(self, board: Board) -> float:
+        start = time.perf_counter()
         features = [
             float(board.get_exponent(r, c))
             for r in range(4)
@@ -61,7 +65,35 @@ class NNEvaluator(BaseEvaluator):
         x = torch.tensor(features, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
             y = self.forward(x).squeeze()
-        return float(y.item())
+        value = float(y.item())
+        if self._profile is not None:
+            self._profile.evaluate_board_calls += 1
+            self._profile.evaluate_board_total_s += time.perf_counter() - start
+        return value
+
+    def evaluate_boards(self, boards: list[Board]) -> list[float]:
+        if not boards:
+            return []
+        start = time.perf_counter()
+        features = [
+            [
+                float(board.get_exponent(r, c))
+                for r in range(4)
+                for c in range(4)
+            ]
+            for board in boards
+        ]
+        x = torch.tensor(features, dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            y = self.forward(x).squeeze(-1)
+        values = y.detach().cpu().tolist()
+        if isinstance(values, float):
+            values = [values]
+        values = [float(v) for v in values]
+        if self._profile is not None:
+            self._profile.evaluate_board_calls += len(values)
+            self._profile.evaluate_board_total_s += time.perf_counter() - start
+        return values
 
     def append_state(self, board: Board) -> None:
         features = [
@@ -82,6 +114,9 @@ class NNEvaluator(BaseEvaluator):
         # NN optimization should be triggered by trainer logic.
         return
 
+    def bind_profile(self, profile: EpisodeProfile | None) -> None:
+        self._profile = profile
+
     def train_episode(self, final_score: float) -> float:
         """
         Train once using the cached states from one finished episode.
@@ -89,7 +124,10 @@ class NNEvaluator(BaseEvaluator):
         If rewards are missing, fallback target is final_score.
         Returns the scalar training loss.
         """
+        start = time.perf_counter()
         if not self.episode_states:
+            if self._profile is not None:
+                self._profile.train_episode_total_s += time.perf_counter() - start
             return 0.0
 
         was_training = self._training_mode
@@ -130,7 +168,10 @@ class NNEvaluator(BaseEvaluator):
         if not was_training:
             self.set_eval_mode()
 
-        return float(loss.item())
+        value = float(loss.item())
+        if self._profile is not None:
+            self._profile.train_episode_total_s += time.perf_counter() - start
+        return value
 
     def save(self, path: str | Path | None = None) -> Path:
         file_path = self._resolve_path(path)
