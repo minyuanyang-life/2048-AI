@@ -199,12 +199,19 @@ def run(agent_name: str = "random") -> None:
         case "random":
             from src.ai.agent.random_agent import RandomAgent
             game_gui = GameGUI(root, "2048 Game", RandomAgent())
-        case "expectimax":
+        case "expectimax-Heuristic":
             from src.ai.agent.expectimax_agent import ExpectimaxAgent
-            game_gui = GameGUI(root, "2048 Game", ExpectimaxAgent())
+            from src.ai.evaluator.heuristic_evaluator import HeuristicEvaluator
+            game_gui = GameGUI(root, "2048 Game", ExpectimaxAgent(evaluator=HeuristicEvaluator))
+        case "expectimax-NN":
+            from src.ai.agent.expectimax_agent import ExpectimaxAgent
+            from src.ai.evaluator.NN_evaluator import NNEvaluator
+            game_gui = GameGUI(root, "2048 Game", ExpectimaxAgent(evaluator=NNEvaluator))
     game_gui.run()
 
 if __name__ == "__main__":
+    pass
     # run("heuristic")
     # run("random")
-    run("expectimax")
+    # run("expectimax-Heuristic")
+    run("expectimax-NN")

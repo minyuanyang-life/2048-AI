@@ -3,6 +3,7 @@ from tqdm import tqdm
 
 from src.ai.agent.base_trainer import BaseTrainer
 from src.ai.agent.expectimax_agent import ExpectimaxAgent
+from src.ai.evaluator.heuristic_evaluator import HeuristicEvaluator
 from src.ai.optimizer.spsa_optimizer import SPSAOptimizer
 
 
@@ -12,7 +13,7 @@ class ExpectimaxTrainer(BaseTrainer):
     """
 
     def __init__(self, seed: int | None = None) -> None:
-        super().__init__(ExpectimaxAgent())
+        super().__init__(ExpectimaxAgent(evaluator=HeuristicEvaluator))
         self._rng = random.Random(seed)
 
     def train(

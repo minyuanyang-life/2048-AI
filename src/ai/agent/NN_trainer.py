@@ -1,0 +1,228 @@
+import random
+import torch
+from tqdm import tqdm
+
+from src.ai.agent.base_trainer import BaseTrainer
+from src.ai.agent.expectimax_agent import ExpectimaxAgent
+from src.ai.evaluator.NN_evaluator import NNEvaluator
+from src.ai.evaluator.heuristic_evaluator import HeuristicEvaluator
+from src.core.enums import GameStatus, MoveStatus
+from src.core.game import Game
+
+
+class NNTrainer(BaseTrainer):
+    def __init__(self, seed: int | None = None) -> None:
+        super().__init__(ExpectimaxAgent(evaluator=NNEvaluator, seed=seed))
+        self.seed = 0 if seed is None else int(seed)
+        self._rng = random.Random(self.seed)
+        self._apply_seed(self.seed)
+
+    @staticmethod
+    def _set_global_seed(seed: int) -> None:
+        random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        if hasattr(torch.backends, "cudnn"):
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+
+    def _apply_seed(self, seed: int) -> None:
+        self._set_global_seed(seed)
+        self._rng.seed(seed + 1)
+        if hasattr(self.agent, "_rng") and self.agent._rng is not None:
+            self.agent._rng.seed(seed + 2)
+
+    def _play_one_game(self, seed: int | None = None) -> float:
+        if seed is not None:
+            self._apply_seed(seed)
+        game = Game()
+        game_status = GameStatus.RUNNING
+        while game_status == GameStatus.RUNNING:
+            direction = self.agent.get_action(game)
+            game_status, move_status, _ = game.step(direction)
+            if move_status == MoveStatus.INVALID_MOVE:
+                raise RuntimeError(f"{self.agent.name} produced an invalid move.")
+        return float(game.score)
+
+    def _evaluate_mean_score(self, num_games: int, base_seed: int, episode_idx: int) -> float:
+        if num_games <= 0:
+            return 0.0
+        evaluator = self.agent.evaluator
+        evaluator.set_eval_mode()
+        total = 0.0
+        eval_seed_base = base_seed + 1_000_000 + episode_idx * 1_000
+        for i in range(num_games):
+            total += self._play_one_game(seed=eval_seed_base + i)
+        evaluator.set_train_mode()
+        return total / num_games
+
+    def pretrain_with_teacher(
+            self,
+            num_games: int = 100,
+            max_steps_per_game: int = 300,
+            epochs: int = 3,
+            batch_size: int = 256,
+            target_scale: float = 10.0,
+            base_seed: int = 100_000,
+    ) -> float:
+        """
+        Supervised warmup:
+        - collect states from random-play games
+        - use HeuristicEvaluator as teacher target
+        - train NNEvaluator by MSE
+        """
+        if num_games <= 0 or epochs <= 0:
+            return 0.0
+
+        evaluator = self.agent.evaluator
+        teacher = HeuristicEvaluator()
+        try:
+            teacher.load()
+        except FileNotFoundError:
+            # If no teacher checkpoint exists, use default heuristic weights.
+            pass
+
+        states: list[list[float]] = []
+        targets: list[float] = []
+
+        for game_idx in tqdm(range(num_games), desc="Collect Teacher Data"):
+            self._apply_seed(base_seed + game_idx)
+            game = Game()
+            game_status = GameStatus.RUNNING
+            steps = 0
+
+            while game_status == GameStatus.RUNNING and steps < max_steps_per_game:
+                states.append([
+                    float(game.board.get_exponent(r, c))
+                    for r in range(4)
+                    for c in range(4)
+                ])
+                targets.append(float(teacher.evaluate_board(game.board)) / target_scale)
+
+                legal_dirs = game.board.get_legal_directions()
+                if not legal_dirs:
+                    break
+                direction = self._rng.choice(legal_dirs)
+                game_status, move_status, _ = game.step(direction)
+                if move_status == MoveStatus.INVALID_MOVE:
+                    raise RuntimeError("Random policy produced invalid move unexpectedly.")
+                steps += 1
+
+        if not states:
+            return 0.0
+
+        x_all = torch.tensor(states, dtype=torch.float32, device=evaluator.device)
+        y_all = torch.tensor(targets, dtype=torch.float32, device=evaluator.device).unsqueeze(1)
+
+        evaluator.set_train_mode()
+        n_samples = x_all.shape[0]
+        last_loss = 0.0
+        for _ in tqdm(range(epochs), desc="Teacher Pretrain"):
+            perm = torch.randperm(n_samples, device=evaluator.device)
+            for start in range(0, n_samples, batch_size):
+                idx = perm[start:start + batch_size]
+                xb = x_all[idx]
+                yb = y_all[idx]
+
+                pred = evaluator.forward(xb)
+                loss = evaluator.criterion(pred, yb)
+                evaluator.optimizer.zero_grad()
+                loss.backward()
+                evaluator.optimizer.step()
+                last_loss = float(loss.item())
+
+        evaluator.set_eval_mode()
+        self.agent.save()
+        tqdm.write(f"teacher pretrain done: samples={n_samples}, final_loss={last_loss:.4f}")
+        return last_loss
+
+    def train(
+            self,
+            n: int,
+            base_seed: int = 0,
+            eval_interval: int = 20,
+            eval_games: int = 5,
+    ) -> float:
+        # Keep compatibility with existing signature: n is number of episodes.
+        if n <= 0:
+            return 0.0
+
+        try:
+            self.agent.load()
+        except FileNotFoundError:
+            # First training run may not have a checkpoint yet.
+            pass
+
+        evaluator = self.agent.evaluator
+        evaluator.set_train_mode()
+
+        total_score = 0.0
+        total_loss = 0.0
+        best_eval_score = float("-inf")
+
+        self.pbar = tqdm(range(n), desc="NN Training")
+        for episode_idx in self.pbar:
+            self._apply_seed(base_seed + episode_idx)
+            game = Game()
+            game_status = GameStatus.RUNNING
+
+            evaluator.reset_episode_buffer()
+
+            while game_status == GameStatus.RUNNING:
+                evaluator.append_state(game.board)
+
+                direction = self.agent.get_action(game)
+                game_status, move_status, info = game.step(direction)
+                if move_status == MoveStatus.INVALID_MOVE:
+                    raise RuntimeError(f"{self.agent.name} produced an invalid move.")
+
+                evaluator.append_reward(float(info.get("score_delta", 0.0)))
+
+            total_score += float(game.score)
+            loss = evaluator.train_episode(float(game.score))
+            total_loss += loss
+
+            if (
+                eval_interval > 0
+                and eval_games > 0
+                and (episode_idx + 1) % eval_interval == 0
+            ):
+                mean_eval = self._evaluate_mean_score(eval_games, base_seed, episode_idx)
+                if mean_eval > best_eval_score:
+                    best_eval_score = mean_eval
+                    self.agent.save()
+                    tqdm.write(
+                        f"new best eval mean = {best_eval_score:.1f} "
+                        f"({eval_games} games), checkpoint saved"
+                    )
+
+            self.pbar.set_postfix(
+                avg_score=f"{total_score / (self.pbar.n + 1):.1f}",
+                loss=f"{loss:.4f}",
+            )
+
+        evaluator.set_eval_mode()
+        self.agent.save()
+
+        avg_score = total_score / n
+        avg_loss = total_loss / n
+        tqdm.write(f"NN training done: avg_score={avg_score:.1f}, avg_loss={avg_loss:.4f}")
+        return avg_score
+
+
+def main() -> None:
+    trainer = NNTrainer(seed=0)
+    trainer.pretrain_with_teacher(
+        num_games=100,
+        max_steps_per_game=300,
+        epochs=3,
+        batch_size=256,
+        target_scale=10.0,
+        base_seed=100_000,
+    )
+    trainer.train(n=500, base_seed=0, eval_interval=10, eval_games=10)
+
+
+if __name__ == "__main__":
+    main()

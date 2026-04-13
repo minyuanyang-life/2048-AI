@@ -1,6 +1,13 @@
 from dataclasses import dataclass
 from typing import List, Tuple
 
+import torch
+
+try:
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+except ImportError:
+    DEVICE = "cpu"
+
 
 @dataclass
 class HeuristicWeights:

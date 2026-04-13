@@ -98,3 +98,7 @@ class TrainableAgent(Agent):
 
     def set_param_vector(self, values: list[float]) -> None:
         self._evaluator.set_param_vector(values)
+
+    @property
+    def evaluator(self):
+        return self._evaluator
