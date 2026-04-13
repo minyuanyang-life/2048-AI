@@ -17,6 +17,7 @@ class NNTrainer(BaseTrainer):
         super().__init__(ExpectimaxAgent(evaluator=NNEvaluator, seed=seed))
         self.seed = 0 if seed is None else int(seed)
         self._rng = random.Random(self.seed)
+        self._shape_evaluator = HeuristicEvaluator()
         self._apply_seed(self.seed)
 
     @staticmethod
@@ -47,6 +48,40 @@ class NNTrainer(BaseTrainer):
                 raise RuntimeError(f"{self.agent.name} produced an invalid move.")
         return float(game.score)
 
+    def _compute_shaping_reward(self, game: Game) -> float:
+        """
+        Small shaping reward:
+        - encourage max-tile corner strategy
+        - encourage snake-like monotonic layout
+        """
+        max_exp, max_positions = game.board.get_max_exponent()
+        if max_exp < 0:
+            return 0.0
+
+        corners = ((0, 0), (0, 3), (3, 0), (3, 3))
+        corner_bonus = 0.05 * max_exp
+        distance_penalty = 0.03 * max_exp
+
+        # Best corner distance among all max-tile positions.
+        min_dist = min(
+            abs(r - cr) + abs(c - cc)
+            for r, c in max_positions
+            for cr, cc in corners
+        )
+        on_corner = any((r, c) in corners for r, c in max_positions)
+
+        reward = -distance_penalty * min_dist
+        if on_corner:
+            reward += corner_bonus
+
+        snake_score = self._shape_evaluator.snake_monotonicity_score(game.board)
+        snake_reward = 0.01 * snake_score
+
+        reward += snake_reward
+
+        # Keep shaping bounded so env reward remains dominant.
+        return max(-2.0, min(2.0, reward))
+
     def _evaluate_mean_score(self, num_games: int, base_seed: int, episode_idx: int) -> float:
         if num_games <= 0:
             return 0.0
@@ -56,6 +91,8 @@ class NNTrainer(BaseTrainer):
         eval_seed_base = base_seed + 1_000_000 + episode_idx * 1_000
         for i in range(num_games):
             total += self._play_one_game(seed=eval_seed_base + i)
+            if self.pbar is not None:
+                self.pbar.update(1)
         evaluator.set_train_mode()
         return total / num_games
 
@@ -105,7 +142,8 @@ class NNTrainer(BaseTrainer):
                 if move_status == MoveStatus.INVALID_MOVE:
                     raise RuntimeError(f"{self.agent.name} produced an invalid move.")
 
-                evaluator.append_reward(float(info.get("score_delta", 0.0)))
+                evaluator.append_env_reward(float(info.get("score_delta", 0.0)))
+                evaluator.append_shaping_reward(self._compute_shaping_reward(game))
 
             record.total_duration_s = time.perf_counter() - total_start
             record.total_steps = game.steps
@@ -227,9 +265,15 @@ class NNTrainer(BaseTrainer):
         total_score = 0.0
         total_loss = 0.0
         best_eval_score = float("-inf")
+        latest_eval = 0.0
 
-        self.pbar = tqdm(range(n), desc="NN Training")
-        for episode_idx in self.pbar:
+        eval_rounds = 0
+        if eval_interval > 0 and eval_games > 0:
+            eval_rounds = n // eval_interval
+        total_units = n + eval_rounds * eval_games
+
+        self.pbar = tqdm(total=total_units, desc="NN Training")
+        for episode_idx in range(n):
             self._apply_seed(base_seed + episode_idx)
             game = Game()
             game_status = GameStatus.RUNNING
@@ -244,11 +288,13 @@ class NNTrainer(BaseTrainer):
                 if move_status == MoveStatus.INVALID_MOVE:
                     raise RuntimeError(f"{self.agent.name} produced an invalid move.")
 
-                evaluator.append_reward(float(info.get("score_delta", 0.0)))
+                evaluator.append_env_reward(float(info.get("score_delta", 0.0)))
+                evaluator.append_shaping_reward(self._compute_shaping_reward(game))
 
             total_score += float(game.score)
             loss = evaluator.train_episode(float(game.score))
             total_loss += loss
+            self.pbar.update(1)
 
             if (
                 eval_interval > 0
@@ -256,6 +302,7 @@ class NNTrainer(BaseTrainer):
                 and (episode_idx + 1) % eval_interval == 0
             ):
                 mean_eval = self._evaluate_mean_score(eval_games, base_seed, episode_idx)
+                latest_eval = mean_eval
                 if mean_eval > best_eval_score:
                     best_eval_score = mean_eval
                     self.agent.save()
@@ -265,7 +312,8 @@ class NNTrainer(BaseTrainer):
                     )
 
             self.pbar.set_postfix(
-                avg_score=f"{total_score / (self.pbar.n + 1):.1f}",
+                avg_score=f"{total_score / (episode_idx + 1):.1f}",
+                mean_eval=f"{latest_eval:.1f}",
                 loss=f"{loss:.4f}",
             )
 
@@ -290,7 +338,8 @@ def main() -> None:
             target_scale=10.0,
             base_seed=100_000,
         )
-    trainer.train(n=500, base_seed=0, eval_interval=10, eval_games=10)
+    # trainer.train(n=500, base_seed=0, eval_interval=10, eval_games=10)
+    trainer.train(n=120, base_seed=0, eval_interval=12, eval_games=5)
 
 
 if __name__ == "__main__":

@@ -32,3 +32,6 @@ dist/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Artifacts
+artifacts/

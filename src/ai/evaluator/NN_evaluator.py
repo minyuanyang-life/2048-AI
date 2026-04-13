@@ -25,7 +25,8 @@ class NNEvaluator(BaseEvaluator):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4)
         self.criterion = nn.MSELoss()
         self.episode_states: list[list[float]] = []
-        self.episode_rewards: list[float] = []
+        self.episode_env_rewards: list[float] = []
+        self.episode_shaping_rewards: list[float] = []
         self._training_mode = False
         self._profile: EpisodeProfile | None = None
 
@@ -104,11 +105,19 @@ class NNEvaluator(BaseEvaluator):
         self.episode_states.append(features)
 
     def append_reward(self, reward: float) -> None:
-        self.episode_rewards.append(float(reward))
+        # Backward-compatible alias: append to env reward stream.
+        self.append_env_reward(reward)
+
+    def append_env_reward(self, reward: float) -> None:
+        self.episode_env_rewards.append(float(reward))
+
+    def append_shaping_reward(self, reward: float) -> None:
+        self.episode_shaping_rewards.append(float(reward))
 
     def reset_episode_buffer(self) -> None:
         self.episode_states.clear()
-        self.episode_rewards.clear()
+        self.episode_env_rewards.clear()
+        self.episode_shaping_rewards.clear()
 
     def feedback(self, rng: Random) -> None:
         # NN optimization should be triggered by trainer logic.
@@ -138,11 +147,21 @@ class NNEvaluator(BaseEvaluator):
             dtype=torch.float32,
             device=self.device,
         )
-        if len(self.episode_rewards) == len(self.episode_states):
-            returns = [0.0] * len(self.episode_rewards)
+        if (
+            len(self.episode_env_rewards) == len(self.episode_states)
+            and (
+                len(self.episode_shaping_rewards) == 0
+                or len(self.episode_shaping_rewards) == len(self.episode_states)
+            )
+        ):
+            rewards = list(self.episode_env_rewards)
+            if len(self.episode_shaping_rewards) == len(self.episode_states):
+                rewards = [a + b for a, b in zip(rewards, self.episode_shaping_rewards)]
+
+            returns = [0.0] * len(rewards)
             running = 0.0
-            for i in range(len(self.episode_rewards) - 1, -1, -1):
-                running += self.episode_rewards[i]
+            for i in range(len(rewards) - 1, -1, -1):
+                running += rewards[i]
                 returns[i] = running
             y = torch.tensor(returns, dtype=torch.float32, device=self.device).unsqueeze(1)
             # Normalize targets per episode to reduce scale drift and variance.
