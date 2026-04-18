@@ -277,12 +277,18 @@ def main() -> None:
     load_model_path: str | None = "artifacts/nn_evaluator_baseline.pt"
     # load_model_path = "artifacts/nn_evaluator"
 
+    file_name = "current"
+    # file_name = "baseline"
+
+    output_path: str = f"artifacts/test_nn_depth2_{file_name}.json"
+    output_image_path: str = f"artifacts/test_nn_depth2_{file_name}.png"
+
     tester = NNTester(seed=0, depth=2, model_path=load_model_path)
     report = tester.run(
         num_games=20,
         base_seed=0,
-        output_path="artifacts/test_nn_depth2_baseline_seed=1.json",
-        output_image_path="artifacts/test_nn_depth2_baseline_seed=1.png",
+        output_path=output_path,
+        output_image_path=output_image_path,
     )
     s = report["summary"]
     print(

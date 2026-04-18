@@ -336,6 +336,7 @@ class NNTrainer(BaseTrainer):
         try:
             self.agent.load()
         except FileNotFoundError:
+            tqdm.write("No checkpoint found, training from scratch.")
             # First training run may not have a checkpoint yet.
             pass
 
@@ -431,7 +432,7 @@ def main() -> None:
         )
         return
 
-    enable_teacher_pretrain = True
+    enable_teacher_pretrain = False
     if enable_teacher_pretrain:
         trainer.pretrain_with_teacher(
             num_games=100,
