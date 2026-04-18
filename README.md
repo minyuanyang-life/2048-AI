@@ -52,21 +52,30 @@ run.py                  # GUI entry point
 ### Environment
 - Python 3.10+
 - Dependencies:
+```bash
 pip install torch tqdm matplotlib
+```
 
 ### Run the GUI
+```bash
 python run.py
+```
 
 ### Train the neural evaluator
+```bash
 python -m src.ai.agent.NN_trainer
-
+```
 ### Run tests
+```bash
 python -m src.ai.agent.NN_tester
 python -m src.ai.agent.heuristic_tester
+```
 
 ### Run diagnostic scripts
+```bash
 python -m src.ai.agent.teacher_diagnostics
 python -m src.ai.diagnostics.nn_top1_gap_diagnostic
+```
 
 ## Current status
 
