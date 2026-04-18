@@ -35,3 +35,4 @@ dist/
 
 # Artifacts
 artifacts/
+nn_evaluator.pt

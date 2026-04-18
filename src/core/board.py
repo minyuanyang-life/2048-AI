@@ -1,4 +1,4 @@
-"""
+﻿"""
 Board module for the 2048 game.
 
 This module defines the Board class, which stores the board in exponent form
@@ -26,28 +26,28 @@ class Board:
         self._grid = [[0 for _ in range(4)] for _ in range(4)]
 
     def __str__(self) -> str:
-        # 定义棋盘边框和分隔符，让排版更规整
+        # Define border/separator for stable aligned rendering.
         border = "+------+------+------+------+"
-        lines = [border]  # 存储每一行的字符串
+        lines = [border]  # Accumulate output lines.
 
-        # 遍历棋盘的每一行
+        # Render each board row.
         for row in self._grid:
-            # 处理当前行的每个数字：空位置显示空格，数字居中对齐
+            # Empty cells show blank; non-empty cells show centered tile values.
             cells = []
             for num in row:
                 if num == 0:
-                    # 0显示为空白，保持格子对齐
+                    # Keep fixed width for alignment.
                     cells.append("      ")
                 else:
-                    # 数字居中显示，占6个字符宽度（和边框匹配）
+                    # Display actual tile value with fixed cell width.
                     cells.append(f"{2**num:^6}")
 
-            # 拼接当前行的内容，加上竖线分隔
+            # Join cells with vertical separators.
             line = "|" + "|".join(cells) + "|"
             lines.append(line)
-            lines.append(border)  # 每行下面加分隔边框
+            lines.append(border)  # Add row separator.
 
-        # 把所有行拼接成最终的字符串
+        # Build final multi-line board string.
         return '\n'.join(lines)
 
     def __eq__(self, other) -> bool:
@@ -270,3 +270,4 @@ class Board:
                 j += 1
                 is_merge_ready = True
         return new_line, score
+

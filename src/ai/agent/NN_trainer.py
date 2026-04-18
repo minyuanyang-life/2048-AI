@@ -170,12 +170,16 @@ class NNTrainer(BaseTrainer):
             batch_size: int = 256,
             target_scale: float = 10.0,
             base_seed: int = 100_000,
+            policy_weight: float = 0.6,
+            teacher_rollout_prob: float = 0.8,
+            late_threshold: int = 11,
+            late_boost: int = 3,
     ) -> float:
         """
         Supervised warmup:
-        - collect states from random-play games
+        - collect states from mixed rollout games
         - use HeuristicEvaluator as teacher target
-        - train NNEvaluator by MSE
+        - train NNEvaluator by (value MSE + teacher-action imitation)
         """
         if num_games <= 0 or epochs <= 0:
             return 0.0
@@ -190,6 +194,8 @@ class NNTrainer(BaseTrainer):
 
         states: list[list[float]] = []
         targets: list[float] = []
+        action_succ_features: list[list[list[float]]] = []
+        action_teacher_choice: list[int] = []
 
         for game_idx in tqdm(range(num_games), desc="Collect Teacher Data"):
             self._apply_seed(base_seed + game_idx)
@@ -198,20 +204,52 @@ class NNTrainer(BaseTrainer):
             steps = 0
 
             while game_status == GameStatus.RUNNING and steps < max_steps_per_game:
-                states.append([
+                state_features = [
                     float(game.board.get_exponent(r, c))
                     for r in range(4)
                     for c in range(4)
-                ])
-                targets.append(float(teacher.evaluate_board(game.board)) / target_scale)
+                ]
+                teacher_value = float(teacher.evaluate_board(game.board)) / target_scale
 
                 legal_dirs = game.board.get_legal_directions()
                 if not legal_dirs:
                     break
-                direction = self._rng.choice(legal_dirs)
+
+                succ_dirs: list = []
+                succ_features: list[list[float]] = []
+                succ_teacher_scores: list[float] = []
+                for d in legal_dirs:
+                    next_board, move_status, _ = game.board.simulate_move(d)
+                    if move_status != MoveStatus.MOVED:
+                        continue
+                    succ_dirs.append(d)
+                    succ_features.append([
+                        float(next_board.get_exponent(r, c))
+                        for r in range(4)
+                        for c in range(4)
+                    ])
+                    succ_teacher_scores.append(float(teacher.evaluate_board(next_board)))
+
+                if not succ_features:
+                    break
+
+                best_idx = max(range(len(succ_teacher_scores)), key=lambda i: succ_teacher_scores[i])
+                max_exp, _ = game.board.get_max_exponent()
+                repeat = int(late_boost) if int(max_exp) >= int(late_threshold) else 1
+                repeat = max(1, repeat)
+                for _ in range(repeat):
+                    states.append(state_features)
+                    targets.append(teacher_value)
+                    action_succ_features.append(succ_features)
+                    action_teacher_choice.append(int(best_idx))
+
+                if self._rng.random() < float(teacher_rollout_prob):
+                    direction = succ_dirs[int(best_idx)]
+                else:
+                    direction = self._rng.choice(legal_dirs)
                 game_status, move_status, _ = game.step(direction)
                 if move_status == MoveStatus.INVALID_MOVE:
-                    raise RuntimeError("Random policy produced invalid move unexpectedly.")
+                    raise RuntimeError("Mixed policy produced invalid move unexpectedly.")
                 steps += 1
 
         if not states:
@@ -223,6 +261,8 @@ class NNTrainer(BaseTrainer):
         evaluator.set_train_mode()
         n_samples = x_all.shape[0]
         last_loss = 0.0
+        last_mse = 0.0
+        last_policy = 0.0
         for _ in tqdm(range(epochs), desc="Teacher Pretrain"):
             perm = torch.randperm(n_samples, device=evaluator.device)
             for start in range(0, n_samples, batch_size):
@@ -231,15 +271,54 @@ class NNTrainer(BaseTrainer):
                 yb = y_all[idx]
 
                 pred = evaluator.forward(xb)
-                loss = evaluator.criterion(pred, yb)
+                mse_loss = evaluator.criterion(pred, yb)
+
+                # Teacher action imitation: learn which action teacher picks.
+                policy_loss = torch.tensor(0.0, device=evaluator.device)
+                if policy_weight > 0.0:
+                    batch_indices = idx.detach().cpu().tolist()
+                    batch_succ = [action_succ_features[i] for i in batch_indices]
+                    batch_choice = [action_teacher_choice[i] for i in batch_indices]
+
+                    flat_succ: list[list[float]] = []
+                    row_meta: list[tuple[int, int]] = []
+                    for row_i, succ_list in enumerate(batch_succ):
+                        for col_j, feat in enumerate(succ_list):
+                            flat_succ.append(feat)
+                            row_meta.append((row_i, col_j))
+
+                    if flat_succ:
+                        succ_x = torch.tensor(flat_succ, dtype=torch.float32, device=evaluator.device)
+                        succ_pred = evaluator.forward(succ_x).squeeze(1)
+                        max_actions = max(len(succ) for succ in batch_succ)
+                        logits = torch.full(
+                            (len(batch_succ), max_actions),
+                            -1e9,
+                            dtype=torch.float32,
+                            device=evaluator.device,
+                        )
+                        for k, (row_i, col_j) in enumerate(row_meta):
+                            logits[row_i, col_j] = succ_pred[k]
+                        target_action = torch.tensor(batch_choice, dtype=torch.long, device=evaluator.device)
+                        policy_loss = torch.nn.functional.cross_entropy(logits, target_action)
+
+                loss = mse_loss + policy_weight * policy_loss
                 evaluator.optimizer.zero_grad()
                 loss.backward()
                 evaluator.optimizer.step()
                 last_loss = float(loss.item())
+                last_mse = float(mse_loss.item())
+                last_policy = float(policy_loss.item())
 
         evaluator.set_eval_mode()
         self.agent.save()
-        tqdm.write(f"teacher pretrain done: samples={n_samples}, final_loss={last_loss:.4f}")
+        tqdm.write(
+            "teacher pretrain done: "
+            f"samples={n_samples}, "
+            f"final_loss={last_loss:.4f}, "
+            f"final_mse={last_mse:.4f}, "
+            f"final_policy={last_policy:.4f}"
+        )
         return last_loss
 
     def train(
@@ -248,6 +327,7 @@ class NNTrainer(BaseTrainer):
             base_seed: int = 0,
             eval_interval: int = 20,
             eval_games: int = 5,
+            reward_2048_bonus: float = 300.0,
     ) -> float:
         # Keep compatibility with existing signature: n is number of episodes.
         if n <= 0:
@@ -289,7 +369,12 @@ class NNTrainer(BaseTrainer):
                     raise RuntimeError(f"{self.agent.name} produced an invalid move.")
 
                 evaluator.append_env_reward(float(info.get("score_delta", 0.0)))
-                evaluator.append_shaping_reward(self._compute_shaping_reward(game))
+                # evaluator.append_shaping_reward(self._compute_shaping_reward(game))
+
+            max_exp, _ = game.board.get_max_exponent()
+            if max_exp >= 11:  # 2**11 == 2048
+                pass
+                # evaluator.append_shaping_reward(float(reward_2048_bonus))
 
             total_score += float(game.score)
             loss = evaluator.train_episode(float(game.score))
@@ -328,7 +413,25 @@ class NNTrainer(BaseTrainer):
 
 def main() -> None:
     trainer = NNTrainer(seed=0)
-    enable_teacher_pretrain = False
+    # mode:
+    # - "normal": keep original flow
+    # - "teacher_only": only run teacher pretraining with more rounds
+    # mode = "teacher_only"
+    mode = "normal"
+
+    if mode == "teacher_only":
+        trainer.pretrain_with_teacher(
+            num_games=100,
+            max_steps_per_game=10000,
+            epochs=20,
+            batch_size=256,
+            target_scale=10.0,
+            base_seed=100_000,
+            policy_weight=0,
+        )
+        return
+
+    enable_teacher_pretrain = True
     if enable_teacher_pretrain:
         trainer.pretrain_with_teacher(
             num_games=100,
@@ -337,9 +440,10 @@ def main() -> None:
             batch_size=256,
             target_scale=10.0,
             base_seed=100_000,
+            policy_weight=0,
         )
-    # trainer.train(n=500, base_seed=0, eval_interval=10, eval_games=10)
-    trainer.train(n=120, base_seed=0, eval_interval=12, eval_games=5)
+    trainer.train(n=500, base_seed=100, eval_interval=10, eval_games=10)
+    # trainer.train(n=120, base_seed=1, eval_interval=12, eval_games=5)
 
 
 if __name__ == "__main__":

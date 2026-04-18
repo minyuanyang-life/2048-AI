@@ -2,9 +2,11 @@ from dataclasses import replace
 from math import log2
 from pathlib import Path
 from random import Random
+import time
 
 from src.ai.agent_io import save_params, load_params
 from src.ai.evaluator.base_evaluator import BaseEvaluator
+from src.ai.metrics.profile_store import EpisodeProfile
 from src.core.board import Board
 from src.ai.evaluator.config import HeuristicWeights, SNAKE_TEMPLATES, HeuristicTrainerConfig
 
@@ -15,20 +17,34 @@ class HeuristicEvaluator(BaseEvaluator):
             "HeuristicEvaluator",
             replace(weights) if weights is not None else HeuristicWeights()
         )
+        self._profile: EpisodeProfile | None = None
 
     def evaluate_board(self, board: Board) -> float:
+        start = time.perf_counter()
         feature_empty = self._feature_empty_tiles(board)
         feature_log2_max = self._feature_log2_max_tile(board)
         feature_snake_monotonicity = self._feature_snake_monotonicity(board)
 
-        return (
+        value = (
             feature_empty * self._params.empty
             + feature_log2_max * self._params.log2_max
             + feature_snake_monotonicity * self._params.snake_monotonicity
         )
+        if self._profile is not None:
+            self._profile.evaluate_board_calls += 1
+            self._profile.evaluate_board_total_s += time.perf_counter() - start
+        return value
 
     def evaluate_boards(self, boards: list[Board]) -> list[float]:
-        return [self.evaluate_board(board) for board in boards]
+        start = time.perf_counter()
+        values = [self._evaluate_board_no_profile(board) for board in boards]
+        if self._profile is not None:
+            self._profile.evaluate_board_calls += len(values)
+            self._profile.evaluate_board_total_s += time.perf_counter() - start
+        return values
+
+    def bind_profile(self, profile: EpisodeProfile | None) -> None:
+        self._profile = profile
 
     def snake_monotonicity_score(self, board: Board) -> float:
         return self._feature_snake_monotonicity(board)
@@ -104,6 +120,16 @@ class HeuristicEvaluator(BaseEvaluator):
         )
 
         return -total_penalty
+
+    def _evaluate_board_no_profile(self, board: Board) -> float:
+        feature_empty = self._feature_empty_tiles(board)
+        feature_log2_max = self._feature_log2_max_tile(board)
+        feature_snake_monotonicity = self._feature_snake_monotonicity(board)
+        return (
+            feature_empty * self._params.empty
+            + feature_log2_max * self._params.log2_max
+            + feature_snake_monotonicity * self._params.snake_monotonicity
+        )
 
     @staticmethod
     def _feature_empty_tiles(board: Board) -> float:
